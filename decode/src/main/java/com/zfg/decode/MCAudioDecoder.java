@@ -1,13 +1,13 @@
 package com.zfg.decode;
 
 /**
- * 视频硬解码
+ * 音频硬解码
  *
  * @author zhongfanggui
  * @version 1.0.0
  * @since 2023/5/24
  */
-public class MCVideoDecode extends Thread {
+public class MCAudioDecoder extends Thread {
 
     @Override
     public void run() {
