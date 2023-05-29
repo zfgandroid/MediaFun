@@ -81,6 +81,7 @@ public class MCAudioEncoder extends Thread {
     public MCAudioEncoder(Context context) {
         this.mContext = context;
         createFile();
+        startRecord();
         initEncoder();
     }
 
@@ -136,9 +137,8 @@ public class MCAudioEncoder extends Thread {
         mMediaCodec.configure(mediaFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);
         mMediaCodec.start();
         LogUtils.i("Start mediacodec");
-
-        // 开始录音
-        return startRecord();
+        isPrepared = true;
+        return true;
     }
 
     private boolean startRecord() {
@@ -157,7 +157,11 @@ public class MCAudioEncoder extends Thread {
         // 创建AudioRecord对象
         mAudioRecord = new AudioRecord(MediaRecorder.AudioSource.MIC, SAMPLE_RATE_HZ,
                 CHANNEL_IN_CONFIG, AUDIO_FORMAT, minBufferSize);
-        isPrepared = true;
+        int state = mAudioRecord.getState();
+        if (AudioRecord.STATE_INITIALIZED != state) {
+            LogUtils.e("AudioRecord create failed!");
+            return false;
+        }
         mAudioRecord.startRecording();
         LogUtils.i("Start record");
         return true;
@@ -203,22 +207,21 @@ public class MCAudioEncoder extends Thread {
     @Override
     public void run() {
         LogUtils.i("Start MCAudioEncoder thread...");
+        boolean initMediaCodecResult = false;
         // 初始化一个buffer，存放录音数据
-        byte[] bufferData = new byte[minBufferSize];
+        byte[] audioData = new byte[minBufferSize];
         // 获取到的录音大小
         int readBytes;
         while (!isStopEncode) {
             // 启动或重启
             if (!isPrepared) {
-                LogUtils.i("startMediaCodec run...");
-                startMediaCodec();
-            } else if (null != mAudioRecord) {
-                readBytes = mAudioRecord.read(bufferData, 0, minBufferSize);
-                LogUtils.i("read record data run...readBytes = " + readBytes);
-                // 如果读取音频数据没有出现错误，就将数据写入到文件
-                if (AudioRecord.ERROR_INVALID_OPERATION != readBytes) {
+                initMediaCodecResult = startMediaCodec();
+            } else if (initMediaCodecResult && null != mAudioRecord) {
+                readBytes = mAudioRecord.read(audioData, 0, minBufferSize);
+                // 如果读取音频数据没有出现错误，就开始编码
+                if (readBytes > 0) {
                     // 将PCM编码成AAC
-                    encodeData(bufferData, readBytes);
+                    encodeData(audioData, readBytes);
                 }
             }
         }
@@ -226,7 +229,7 @@ public class MCAudioEncoder extends Thread {
         if (null != mFileOutputStream) {
             try {
                 mFileOutputStream.close();
-                LogUtils.i("停止写入");
+                LogUtils.i("FileOutputStream close");
             } catch (IOException e) {
                 e.printStackTrace();
             }
@@ -274,7 +277,6 @@ public class MCAudioEncoder extends Thread {
 
             try {
                 mFileOutputStream.write(targetByte);
-                LogUtils.i("save data");
             } catch (IOException e) {
                 e.printStackTrace();
             }
