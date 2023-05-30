@@ -1,4 +1,4 @@
-package com.zfg.mediafun;
+package com.zfg.mediafun.activity;
 
 import androidx.appcompat.app.AppCompatActivity;
 

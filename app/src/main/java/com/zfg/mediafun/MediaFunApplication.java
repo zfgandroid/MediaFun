@@ -20,6 +20,7 @@ public class MediaFunApplication extends Application {
         mApplication = this;
 
         LogUtils.setLevel(LogUtils.DEBUG);
+        LogUtils.i("Show log...");
     }
 
     public static Application getApplication() {

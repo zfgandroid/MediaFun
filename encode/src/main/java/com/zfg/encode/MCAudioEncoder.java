@@ -11,7 +11,7 @@ import android.media.MediaFormat;
 import android.media.MediaRecorder;
 
 import com.zfg.common.Constants;
-import com.zfg.common.utils.DateUtil;
+import com.zfg.common.utils.DateUtils;
 import com.zfg.common.utils.LogUtils;
 
 import java.io.File;
@@ -92,7 +92,7 @@ public class MCAudioEncoder extends Thread {
             dir.mkdirs();
         }
         // 创建文件
-        String fileName = DateUtil.getStringDate() + ".aac";
+        String fileName = DateUtils.getStringDate() + ".aac";
         File file = new File(Constants.PATH, fileName);
         if (file.exists()) {
             file.delete();

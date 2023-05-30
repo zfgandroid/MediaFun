@@ -1,6 +1,7 @@
-package com.zfg.mediafun;
+package com.zfg.mediafun.activity;
 
 import android.Manifest;
+import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Bundle;
@@ -9,6 +10,7 @@ import android.widget.Button;
 import android.widget.Toast;
 
 import com.zfg.encode.MCAudioEncoder;
+import com.zfg.mediafun.R;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -30,6 +32,7 @@ public class MainActivity extends BaseActivity implements View.OnClickListener {
      * 需要申请的运行时权限
      */
     private String[] mPermissions = new String[]{
+            Manifest.permission.CAMERA,
             Manifest.permission.RECORD_AUDIO,
             Manifest.permission.READ_EXTERNAL_STORAGE,
             Manifest.permission.WRITE_EXTERNAL_STORAGE
@@ -42,6 +45,7 @@ public class MainActivity extends BaseActivity implements View.OnClickListener {
 
     private Button mStartRecordBtn;
     private Button mStopRecordBtn;
+    private Button mToPreviewBtn;
 
     private MCAudioEncoder mcAudioEncoder;
 
@@ -58,9 +62,11 @@ public class MainActivity extends BaseActivity implements View.OnClickListener {
     private void initView() {
         mStartRecordBtn = findViewById(R.id.btn_start_record);
         mStopRecordBtn = findViewById(R.id.btn_stop_record);
+        mToPreviewBtn = findViewById(R.id.btn_to_preview);
 
         mStartRecordBtn.setOnClickListener(this);
         mStopRecordBtn.setOnClickListener(this);
+        mToPreviewBtn.setOnClickListener(this);
     }
 
     private void checkPermissions() {
@@ -101,6 +107,9 @@ public class MainActivity extends BaseActivity implements View.OnClickListener {
             case R.id.btn_stop_record:
                 stopRecord();
                 break;
+            case R.id.btn_to_preview:
+                toPreview();
+                break;
             default:
                 break;
         }
@@ -115,5 +124,10 @@ public class MainActivity extends BaseActivity implements View.OnClickListener {
         if (null != mcAudioEncoder) {
             mcAudioEncoder.stopEncode();
         }
+    }
+
+    private void toPreview() {
+        Intent intent = new Intent(MainActivity.this, PreviewActivity.class);
+        startActivity(intent);
     }
 }
