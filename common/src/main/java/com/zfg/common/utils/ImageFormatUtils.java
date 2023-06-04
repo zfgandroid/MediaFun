@@ -11,6 +11,12 @@ import java.nio.ByteBuffer;
  */
 public class ImageFormatUtils {
 
+    static {
+        System.loadLibrary("mediafun");
+    }
+
+    public static native String stringFromJNI();
+
     /**
      * YUV_420_888转NV21
      *
