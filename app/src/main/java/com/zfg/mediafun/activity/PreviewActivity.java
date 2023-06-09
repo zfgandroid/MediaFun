@@ -121,11 +121,13 @@ public class PreviewActivity extends BaseActivity {
 
             // 由于得到的图片格式是YUV_420_888的，这里我采用先转为NV21再转为NV12然后编码H264
             // 角度转换
-            byte[] nv21 = ImageFormatUtils.yuv420888ToNV21(yPlane, uPlane, vPlane,
-                    mSize.getWidth(), mSize.getHeight());
-            byte[] nv12 = new byte[mSize.getWidth() * mSize.getHeight() * 3 / 2];
-            ImageFormatUtils.NV21ToNV12(nv21, nv12, mSize.getWidth(), mSize.getHeight());
-
+//            byte[] nv21 = ImageFormatUtils.yuv420888ToNV21(yPlane, uPlane, vPlane,
+//                    mSize.getWidth(), mSize.getHeight());
+//            byte[] nv12 = new byte[mSize.getWidth() * mSize.getHeight() * 3 / 2];
+//            ImageFormatUtils.NV21ToNV12(nv21, nv12, mSize.getWidth(), mSize.getHeight());
+            boolean flag = ImageFormatUtils.areUVPlanesNV21(uPlane, vPlane, mSize.getWidth(), mSize.getHeight());
+            // true
+            LogUtils.i("flag = " + flag);
             image.close();
         });
 
