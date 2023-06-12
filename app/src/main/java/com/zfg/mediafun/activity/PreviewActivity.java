@@ -5,6 +5,7 @@ import android.util.Size;
 import android.view.Surface;
 import android.view.View;
 import android.view.Window;
+import android.widget.Button;
 import android.widget.Toast;
 
 import androidx.annotation.NonNull;
@@ -24,6 +25,7 @@ import com.zfg.common.Constants;
 import com.zfg.common.utils.DateUtils;
 import com.zfg.common.utils.ImageFormatUtils;
 import com.zfg.common.utils.LogUtils;
+import com.zfg.encode.MCVideoEncoder;
 import com.zfg.mediafun.R;
 
 import java.io.File;
@@ -44,6 +46,7 @@ public class PreviewActivity extends BaseActivity {
     private final int HEIGHT = 1080;
     private Size mSize = new Size(WIDTH, HEIGHT);
 
+    private Button mEncodeBtn;
     private PreviewView mPreviewView;
     private ListenableFuture<ProcessCameraProvider> mCameraProviderFuture;
     private ImageCapture mImageCapture;
@@ -52,6 +55,18 @@ public class PreviewActivity extends BaseActivity {
     private int mFacing = CameraSelector.LENS_FACING_BACK;
     private final ExecutorService mCameraExecutor = Executors.newSingleThreadExecutor();
 
+    private MCVideoEncoder mcVideoEncoder;
+    private boolean isStartEncode;
+
+    // 编码相关参数
+    private final String MIME_TYPE = "video/avc"; // H.264
+    private int width = 1280;
+    private int height = 720;
+    private int frameRate = 30;
+    private final int GOP = 10;
+    private final int COMPRESS_RATIO = 256;
+    private final int BIT_RATE = width * height * 3 * 8 * frameRate / COMPRESS_RATIO;
+
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -59,9 +74,17 @@ public class PreviewActivity extends BaseActivity {
 
         setContentView(R.layout.activity_preview);
 
+        mEncodeBtn = findViewById(R.id.btn_encode);
         mPreviewView = findViewById(R.id.preview);
 
+        initVideoEncoder();
+
         startCamera();
+    }
+
+    private void initVideoEncoder() {
+        mcVideoEncoder = new MCVideoEncoder(MIME_TYPE, Surface.ROTATION_90, width, height,
+                frameRate, BIT_RATE, GOP);
     }
 
     private void startCamera() {
@@ -99,6 +122,9 @@ public class PreviewActivity extends BaseActivity {
                 .setBackpressureStrategy(ImageAnalysis.STRATEGY_BLOCK_PRODUCER) // 阻塞模式
                 .setTargetRotation(Surface.ROTATION_90)
                 .build();
+
+        byte[] nv12 = new byte[mSize.getWidth() * mSize.getHeight() * 3 / 2];
+
         mImageAnalyzer.setAnalyzer(mCameraExecutor, image -> {
             // CameraX默认出图格式：YUV_420_888  YYYY UV VU，数据分别在image.getPlanes()[0]，
             // image.getPlanes()[1]，image.getPlanes()[2]中
@@ -121,13 +147,13 @@ public class PreviewActivity extends BaseActivity {
 
             // 由于得到的图片格式是YUV_420_888的，这里我采用先转为NV21再转为NV12然后编码H264
             // 角度转换
-//            byte[] nv21 = ImageFormatUtils.yuv420888ToNV21(yPlane, uPlane, vPlane,
-//                    mSize.getWidth(), mSize.getHeight());
-//            byte[] nv12 = new byte[mSize.getWidth() * mSize.getHeight() * 3 / 2];
-//            ImageFormatUtils.NV21ToNV12(nv21, nv12, mSize.getWidth(), mSize.getHeight());
-            boolean flag = ImageFormatUtils.areUVPlanesNV21(uPlane, vPlane, mSize.getWidth(), mSize.getHeight());
-            // true
-            LogUtils.i("flag = " + flag);
+            if (isStartEncode) {
+                byte[] nv21 = ImageFormatUtils.yuv420888ToNV21(yPlane, uPlane, vPlane,
+                        mSize.getWidth(), mSize.getHeight());
+//                ImageFormatUtils.NV21ToNV12(nv21, nv12, mSize.getWidth(), mSize.getHeight());
+                mcVideoEncoder.add(nv21);
+            }
+
             image.close();
         });
 
@@ -176,12 +202,29 @@ public class PreviewActivity extends BaseActivity {
         }
     }
 
+    public void encodeClick(View view) {
+        String label = mEncodeBtn.getText().toString();
+        LogUtils.i("encoderClick label = " + label);
+        if ("开始编码".equals(label)) {
+            mEncodeBtn.setText("停止编码");
+            mcVideoEncoder.start();
+            isStartEncode = true;
+        } else {
+            mEncodeBtn.setText("开始编码");
+            isStartEncode = false;
+            mcVideoEncoder.stopEncode();
+        }
+    }
+
     private void stopRecording() {
         LogUtils.i("stopRecording");
         // stop encode
         if (null != mImageAnalyzer) {
             mImageAnalyzer.clearAnalyzer();
         }
+
+        isStartEncode = false;
+        mcVideoEncoder.stopEncode();
     }
 
     @Override
