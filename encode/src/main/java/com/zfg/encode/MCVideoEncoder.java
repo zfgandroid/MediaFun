@@ -41,6 +41,7 @@ public class MCVideoEncoder extends Thread {
     private MediaFormat mediaFormat;
     private MediaCodecInfo mCodecInfo;
     private MediaCodec mMediaCodec;
+    private MediaCodec.BufferInfo mBufferInfo;
 
     // MediaCodec是否准备好了
     private volatile boolean isPrepared = false;
@@ -78,7 +79,7 @@ public class MCVideoEncoder extends Thread {
             dir.mkdirs();
         }
         // 创建文件
-        String fileName = DateUtils.getStringDate() + ".mp4";
+        String fileName = DateUtils.getStringDate() + ".h264";
         File file = new File(Constants.PATH, fileName);
         if (file.exists()) {
             file.delete();
@@ -91,6 +92,7 @@ public class MCVideoEncoder extends Thread {
     }
 
     private void initVideoEncoder() {
+        mBufferInfo = new MediaCodec.BufferInfo();
         // 设置编码参数
         if ((mRotation == 90 || mRotation == 270)) {
             mediaFormat = MediaFormat.createVideoFormat(mEncodeType, mHeight, mWidth);
@@ -242,43 +244,26 @@ public class MCVideoEncoder extends Thread {
 
     private void encodeFrame(byte[] input) {
         try {
-            ByteBuffer[] inputBuffers = mMediaCodec.getInputBuffers();
-            ByteBuffer[] outputBuffers = mMediaCodec.getOutputBuffers();
-            int inputBufferIndex = mMediaCodec.dequeueInputBuffer(10000);
-            LogUtils.i("inputBufferIndex, = " + inputBufferIndex);
+            int inputBufferIndex = mMediaCodec.dequeueInputBuffer(-1);
             if (inputBufferIndex >= 0) {
                 pts = computePresentationTime(generateIndex);
-                ByteBuffer inputBuffer = inputBuffers[inputBufferIndex];
+                ByteBuffer inputBuffer = mMediaCodec.getInputBuffer(inputBufferIndex);
                 inputBuffer.clear();
-                if (inputBuffer.remaining() >= input.length) {
-                    LogUtils.i("put data");
-                    inputBuffer.put(input);
-                    mMediaCodec.queueInputBuffer(inputBufferIndex, 0, input.length, pts, 0);
-                    generateIndex += 1;
-                }
+                // inputBuffer.remaining()要大于或等于input.length否则报错
+                // inputBuffer.remaining()大小与编码时设置的参数有关，如宽高和帧率等
+                inputBuffer.put(input);
+                mMediaCodec.queueInputBuffer(inputBufferIndex, 0, input.length, pts, 0);
+                generateIndex += 1;
             }
 
-            MediaCodec.BufferInfo bufferInfo = new MediaCodec.BufferInfo();
-            int outputBufferIndex = mMediaCodec.dequeueOutputBuffer(bufferInfo, TIMEOUT);
-            LogUtils.i("outputBufferIndex = " + outputBufferIndex);
+            int outputBufferIndex = mMediaCodec.dequeueOutputBuffer(mBufferInfo, TIMEOUT);
             while (outputBufferIndex >= 0) {
-                ByteBuffer outputBuffer = outputBuffers[outputBufferIndex];
-                byte[] outData = new byte[bufferInfo.size];
+                ByteBuffer outputBuffer = mMediaCodec.getOutputBuffer(outputBufferIndex);
+                byte[] outData = new byte[mBufferInfo.size];
                 outputBuffer.get(outData);
-                if (bufferInfo.flags == MediaCodec.BUFFER_FLAG_CODEC_CONFIG) {
-                    configByte = new byte[bufferInfo.size];
-                    configByte = outData;
-                } else if (bufferInfo.flags == MediaCodec.BUFFER_FLAG_SYNC_FRAME) {
-                    byte[] keyframe = new byte[bufferInfo.size + configByte.length];
-                    System.arraycopy(configByte, 0, keyframe, 0, configByte.length);
-                    System.arraycopy(outData, 0, keyframe, configByte.length, outData.length);
-                    mFileOutputStream.write(keyframe, 0, keyframe.length);
-                } else {
-                    mFileOutputStream.write(outData, 0, outData.length);
-                }
-
+                mFileOutputStream.write(outData, 0, outData.length);
                 mMediaCodec.releaseOutputBuffer(outputBufferIndex, false);
-                outputBufferIndex = mMediaCodec.dequeueOutputBuffer(bufferInfo, TIMEOUT);
+                outputBufferIndex = mMediaCodec.dequeueOutputBuffer(mBufferInfo, TIMEOUT);
                 LogUtils.i("编码中...");
             }
 

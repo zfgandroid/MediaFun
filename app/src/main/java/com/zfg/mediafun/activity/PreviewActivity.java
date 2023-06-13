@@ -60,9 +60,9 @@ public class PreviewActivity extends BaseActivity {
 
     // 编码相关参数
     private final String MIME_TYPE = "video/avc"; // H.264
-    private int width = 1280;
-    private int height = 720;
-    private int frameRate = 30;
+    private int width = 1920;
+    private int height = 1080;
+    private int frameRate = 25;
     private final int GOP = 10;
     private final int COMPRESS_RATIO = 256;
     private final int BIT_RATE = width * height * 3 * 8 * frameRate / COMPRESS_RATIO;
