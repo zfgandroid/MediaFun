@@ -1,6 +1,7 @@
 package com.zfg.encode;
 
 import android.Manifest;
+import android.annotation.SuppressLint;
 import android.content.Context;
 import android.content.pm.PackageManager;
 import android.media.AudioFormat;
@@ -9,6 +10,7 @@ import android.media.MediaCodec;
 import android.media.MediaCodecInfo;
 import android.media.MediaFormat;
 import android.media.MediaRecorder;
+import android.util.Log;
 
 import com.zfg.common.Constants;
 import com.zfg.common.utils.DateUtils;
@@ -17,6 +19,7 @@ import com.zfg.common.utils.LogUtils;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.lang.ref.WeakReference;
 import java.nio.ByteBuffer;
 
 import androidx.core.app.ActivityCompat;
@@ -65,7 +68,8 @@ public class MCAudioEncoder extends Thread {
      */
     private static final int AUDIO_FORMAT = AudioFormat.ENCODING_PCM_16BIT;
 
-    private Context mContext;
+    private final Object lock = new Object();
+    private WeakReference<MuxerThread> muxerThread;
     private MediaCodec mMediaCodec;
     private MediaFormat mediaFormat;
     private MediaCodec.BufferInfo mBufferInfo;
@@ -76,10 +80,12 @@ public class MCAudioEncoder extends Thread {
     // MediaCodec和AudioRecord是否准备好了
     private volatile boolean isPrepared = false;
     // 是否停止编码
-    private volatile boolean isStopEncode = false;
+    private volatile boolean isExit = false;
+    // 混合器是否准备好
+    private volatile boolean isMuxerReady = false;
 
-    public MCAudioEncoder(Context context) {
-        this.mContext = context;
+    public MCAudioEncoder(WeakReference<MuxerThread> muxerThread) {
+        this.muxerThread = muxerThread;
         createFile();
         startRecord();
         initEncoder();
@@ -141,13 +147,14 @@ public class MCAudioEncoder extends Thread {
         return true;
     }
 
+    @SuppressLint("MissingPermission")
     private boolean startRecord() {
         // 先检查是否有录音权限
-        if (ActivityCompat.checkSelfPermission(mContext, Manifest.permission.RECORD_AUDIO)
-                != PackageManager.PERMISSION_GRANTED) {
-            LogUtils.e("initAudioRecord no record permission");
-            return false;
-        }
+//        if (ActivityCompat.checkSelfPermission(mContext, Manifest.permission.RECORD_AUDIO)
+//                != PackageManager.PERMISSION_GRANTED) {
+//            LogUtils.e("initAudioRecord no record permission");
+//            return false;
+//        }
 
         stopRecord();
 
@@ -195,13 +202,21 @@ public class MCAudioEncoder extends Thread {
         isPrepared = false;
     }
 
-    public void stopEncode() {
-        isStopEncode = true;
+    public void stopEncodeAudio() {
+        isExit = true;
     }
 
     public synchronized void setRestart() {
         isPrepared = false;
         //isMuxerReady = false;
+    }
+
+    public void setMuxerReady(boolean muxerReady) {
+        synchronized (lock) {
+            LogUtils.i("Audio setMuxerReady: " + muxerReady);
+            isMuxerReady = muxerReady;
+            lock.notifyAll();
+        }
     }
 
     @Override
@@ -212,7 +227,7 @@ public class MCAudioEncoder extends Thread {
         byte[] audioData = new byte[minBufferSize];
         // 获取到的录音大小
         int readBytes;
-        while (!isStopEncode) {
+        while (!isExit) {
             // 启动或重启
             if (!isPrepared) {
                 initMediaCodecResult = startMediaCodec();

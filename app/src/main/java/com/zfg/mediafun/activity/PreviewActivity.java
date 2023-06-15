@@ -1,5 +1,14 @@
 package com.zfg.mediafun.activity;
 
+import static com.zfg.encode.MuxerThread.BIT_RATE;
+import static com.zfg.encode.MuxerThread.FRAME_RATE;
+import static com.zfg.encode.MuxerThread.GOP;
+import static com.zfg.encode.MuxerThread.HEIGHT;
+import static com.zfg.encode.MuxerThread.MIME_TYPE;
+import static com.zfg.encode.MuxerThread.ROTATION;
+import static com.zfg.encode.MuxerThread.SIZE;
+import static com.zfg.encode.MuxerThread.WIDTH;
+
 import android.os.Bundle;
 import android.util.Size;
 import android.view.Surface;
@@ -26,6 +35,7 @@ import com.zfg.common.utils.DateUtils;
 import com.zfg.common.utils.ImageFormatUtils;
 import com.zfg.common.utils.LogUtils;
 import com.zfg.encode.MCVideoEncoder;
+import com.zfg.encode.MuxerThread;
 import com.zfg.mediafun.R;
 
 import java.io.File;
@@ -42,9 +52,7 @@ import java.util.concurrent.Executors;
  * @since 2023/5/30
  */
 public class PreviewActivity extends BaseActivity {
-    private final int WIDTH = 1920;
-    private final int HEIGHT = 1080;
-    private Size mSize = new Size(WIDTH, HEIGHT);
+
 
     private Button mEncodeBtn;
     private PreviewView mPreviewView;
@@ -58,14 +66,6 @@ public class PreviewActivity extends BaseActivity {
     private MCVideoEncoder mcVideoEncoder;
     private boolean isStartEncode;
 
-    // 编码相关参数
-    private final String MIME_TYPE = "video/avc"; // H.264
-    private int width = 1920;
-    private int height = 1080;
-    private int frameRate = 25;
-    private final int GOP = 10;
-    private final int COMPRESS_RATIO = 256;
-    private final int BIT_RATE = width * height * 3 * 8 * frameRate / COMPRESS_RATIO;
 
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
@@ -83,8 +83,8 @@ public class PreviewActivity extends BaseActivity {
     }
 
     private void initVideoEncoder() {
-        mcVideoEncoder = new MCVideoEncoder(MIME_TYPE, Surface.ROTATION_90, width, height,
-                frameRate, BIT_RATE, GOP);
+//        mcVideoEncoder = new MCVideoEncoder(MIME_TYPE, ROTATION, WIDTH, HEIGHT,
+//                FRAME_RATE, BIT_RATE, GOP);
     }
 
     private void startCamera() {
@@ -118,12 +118,12 @@ public class PreviewActivity extends BaseActivity {
 
         // 图像分析
         mImageAnalyzer = new ImageAnalysis.Builder()
-                .setTargetResolution(mSize)  // 设置分辨率
+                .setTargetResolution(SIZE)  // 设置分辨率
                 .setBackpressureStrategy(ImageAnalysis.STRATEGY_BLOCK_PRODUCER) // 阻塞模式
                 .setTargetRotation(Surface.ROTATION_90)
                 .build();
 
-        byte[] nv12 = new byte[mSize.getWidth() * mSize.getHeight() * 3 / 2];
+        byte[] nv12 = new byte[SIZE.getWidth() * SIZE.getHeight() * 3 / 2];
 
         mImageAnalyzer.setAnalyzer(mCameraExecutor, image -> {
             // CameraX默认出图格式：YUV_420_888  YYYY UV VU，数据分别在image.getPlanes()[0]，
@@ -140,18 +140,19 @@ public class PreviewActivity extends BaseActivity {
             int width = image.getWidth();
             int height = image.getHeight();
             // 如果不支持默认设置的分辨率，则使用自动选择的分辨率，否则编码器会报错
-            if (width != mSize.getWidth() || height != mSize.getHeight()) {
+            if (width != SIZE.getWidth() || height != SIZE.getHeight()) {
                 LogUtils.e("Automatic selection resolution");
-                mSize = new Size(width, height);
+                SIZE = new Size(width, height);
             }
 
             // 由于得到的图片格式是YUV_420_888的，这里我采用先转为NV21再转为NV12然后编码H264
             // 角度转换
             if (isStartEncode) {
                 byte[] nv21 = ImageFormatUtils.yuv420888ToNV21(yPlane, uPlane, vPlane,
-                        mSize.getWidth(), mSize.getHeight());
-//                ImageFormatUtils.NV21ToNV12(nv21, nv12, mSize.getWidth(), mSize.getHeight());
-                mcVideoEncoder.add(nv21);
+                        SIZE.getWidth(), SIZE.getHeight());
+                ImageFormatUtils.NV21ToNV12(nv21, nv12, SIZE.getWidth(), SIZE.getHeight());
+//                mcVideoEncoder.add(nv21);
+                MuxerThread.addVideoPreviewData(nv12);
             }
 
             image.close();
@@ -212,7 +213,7 @@ public class PreviewActivity extends BaseActivity {
         } else {
             mEncodeBtn.setText("开始编码");
             isStartEncode = false;
-            mcVideoEncoder.stopEncode();
+            mcVideoEncoder.stopEncodeVideo();
         }
     }
 
@@ -224,7 +225,7 @@ public class PreviewActivity extends BaseActivity {
         }
 
         isStartEncode = false;
-        mcVideoEncoder.stopEncode();
+        mcVideoEncoder.stopEncodeVideo();
     }
 
     @Override

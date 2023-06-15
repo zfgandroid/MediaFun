@@ -116,14 +116,14 @@ public class MainActivity extends BaseActivity implements View.OnClickListener {
     }
 
     private void startRecord() {
-        mcAudioEncoder = new MCAudioEncoder(this);
-        mcAudioEncoder.start();
+//        mcAudioEncoder = new MCAudioEncoder(this);
+//        mcAudioEncoder.start();
     }
 
     private void stopRecord() {
-        if (null != mcAudioEncoder) {
-            mcAudioEncoder.stopEncode();
-        }
+//        if (null != mcAudioEncoder) {
+//            mcAudioEncoder.stopEncodeAudio();
+//        }
     }
 
     private void toPreview() {

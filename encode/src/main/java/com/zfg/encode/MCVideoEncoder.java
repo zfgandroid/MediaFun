@@ -13,6 +13,7 @@ import com.zfg.common.utils.LogUtils;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.lang.ref.WeakReference;
 import java.nio.ByteBuffer;
 import java.util.concurrent.ArrayBlockingQueue;
 
@@ -36,7 +37,9 @@ public class MCVideoEncoder extends Thread {
     private int mBitrate;
     // I帧间隔
     private int mGOP;
+    private WeakReference<MuxerThread> muxerThread;
 
+    private final Object lock = new Object();
     private FileOutputStream mFileOutputStream;
     private MediaFormat mediaFormat;
     private MediaCodecInfo mCodecInfo;
@@ -46,7 +49,9 @@ public class MCVideoEncoder extends Thread {
     // MediaCodec是否准备好了
     private volatile boolean isPrepared = false;
     // 是否停止编码
-    private volatile boolean isStopEncode = false;
+    private volatile boolean isExit = false;
+    // 混合器是否准备好
+    private volatile boolean isMuxerReady = false;
 
     // 存储每一帧的数据 Vector 自增数组
     public ArrayBlockingQueue<byte[]> mFrameBytes = new ArrayBlockingQueue<>(10);
@@ -58,7 +63,7 @@ public class MCVideoEncoder extends Thread {
     public byte[] configByte;
 
     public MCVideoEncoder(String encodeType, int rotation, int width, int height, int frameRate,
-                          int bitrate, int gop) {
+                          int bitrate, int gop, WeakReference<MuxerThread> muxerThread) {
         mEncodeType = encodeType;
         mRotation = rotation;
         mWidth = width;
@@ -66,6 +71,7 @@ public class MCVideoEncoder extends Thread {
         mFrameRate = frameRate;
         mBitrate = bitrate;
         mGOP = gop;
+        this.muxerThread = muxerThread;
 
         createFile();
 
@@ -196,8 +202,8 @@ public class MCVideoEncoder extends Thread {
         isPrepared = false;
     }
 
-    public void stopEncode() {
-        isStopEncode = true;
+    public void stopEncodeVideo() {
+        isExit = true;
     }
 
     public void add(byte[] data) {
@@ -213,10 +219,18 @@ public class MCVideoEncoder extends Thread {
         mFrameBytes.clear();
     }
 
+    public void setMuxerReady(boolean muxerReady) {
+        synchronized (lock) {
+            LogUtils.i("Audio setMuxerReady: " + muxerReady);
+            isMuxerReady = muxerReady;
+            lock.notifyAll();
+        }
+    }
+
     @Override
     public void run() {
         LogUtils.i("Start MCVideoEncoder thread...");
-        while (!isStopEncode) {
+        while (!isExit) {
             // 启动或重启
             if (!isPrepared) {
                 startMediaCodec();
