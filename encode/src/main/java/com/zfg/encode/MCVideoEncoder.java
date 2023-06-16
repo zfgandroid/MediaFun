@@ -61,6 +61,8 @@ public class MCVideoEncoder extends Thread {
     // 超时时间，单位：微秒，1微秒=0.001毫秒 0.012秒
     private final static int TIMEOUT = 12000;
     public byte[] configByte;
+    // 是否单独保存H264文件
+    private boolean isSaveH264;
 
     public MCVideoEncoder(String encodeType, int rotation, int width, int height, int frameRate,
                           int bitrate, int gop, WeakReference<MuxerThread> muxerThread) {
@@ -73,7 +75,9 @@ public class MCVideoEncoder extends Thread {
         mGOP = gop;
         this.muxerThread = muxerThread;
 
-        createFile();
+        if (isSaveH264) {
+            createFile();
+        }
 
         initVideoEncoder();
     }
@@ -207,15 +211,17 @@ public class MCVideoEncoder extends Thread {
     }
 
     public void add(byte[] data) {
-        if (mFrameBytes.size() >= 10) {
-            mFrameBytes.poll();
+        if (null != mFrameBytes && isMuxerReady) {
+            if (mFrameBytes.size() >= 10) {
+                mFrameBytes.poll();
+            }
+            mFrameBytes.add(data);
         }
-        mFrameBytes.add(data);
     }
 
     public synchronized void restart() {
         isPrepared = false;
-//        isMuxerReady = false;
+        isMuxerReady = false;
         mFrameBytes.clear();
     }
 
@@ -231,8 +237,18 @@ public class MCVideoEncoder extends Thread {
     public void run() {
         LogUtils.i("Start MCVideoEncoder thread...");
         while (!isExit) {
-            // 启动或重启
-            if (!isPrepared) {
+
+            if (!isMuxerReady) {
+                synchronized (lock) {
+                    try {
+                        LogUtils.i("Video wait muxer...");
+                        lock.wait();
+                    } catch (InterruptedException e) {
+                    }
+                }
+            }
+
+            if (isMuxerReady && !isPrepared) {
                 startMediaCodec();
             } else if (mFrameBytes.size() > 0) {
                 byte[] bytes = mFrameBytes.poll();
@@ -241,8 +257,7 @@ public class MCVideoEncoder extends Thread {
             }
         }
 
-        // 关闭数据流
-        if (null != mFileOutputStream) {
+        if (isSaveH264 && null != mFileOutputStream) {
             try {
                 mFileOutputStream.flush();
                 mFileOutputStream.close();
@@ -257,34 +272,59 @@ public class MCVideoEncoder extends Thread {
     }
 
     private void encodeFrame(byte[] input) {
-        try {
-            int inputBufferIndex = mMediaCodec.dequeueInputBuffer(-1);
-            if (inputBufferIndex >= 0) {
-                pts = computePresentationTime(generateIndex);
-                ByteBuffer inputBuffer = mMediaCodec.getInputBuffer(inputBufferIndex);
-                inputBuffer.clear();
-                // inputBuffer.remaining()要大于或等于input.length否则报错
-                // inputBuffer.remaining()大小与编码时设置的参数有关，如宽高和帧率等
-                inputBuffer.put(input);
-                mMediaCodec.queueInputBuffer(inputBufferIndex, 0, input.length, pts, 0);
-                generateIndex += 1;
+        int inputBufferIndex = mMediaCodec.dequeueInputBuffer(-1);
+        if (inputBufferIndex >= 0) {
+//            pts = computePresentationTime(generateIndex);
+            ByteBuffer inputBuffer = mMediaCodec.getInputBuffer(inputBufferIndex);
+            inputBuffer.clear();
+            // inputBuffer.remaining()要大于或等于input.length否则报错
+            // inputBuffer.remaining()大小与编码时设置的参数有关，如宽高和帧率等
+            inputBuffer.put(input);
+            mMediaCodec.queueInputBuffer(inputBufferIndex, 0, input.length,
+                    System.nanoTime() / 1000, 0);
+//            generateIndex += 1;
+        }
+
+        MuxerThread muxer = muxerThread.get();
+        if (muxer == null) {
+            LogUtils.e("MuxerThread is null");
+            return;
+        }
+        MediaFormat format = mMediaCodec.getOutputFormat();
+        muxer.addMediaTrack(MuxerThread.TRACK_VIDEO, format);
+
+        int outputBufferIndex = mMediaCodec.dequeueOutputBuffer(mBufferInfo, TIMEOUT);
+        while (outputBufferIndex >= 0) {
+            ByteBuffer outputBuffer = mMediaCodec.getOutputBuffer(outputBufferIndex);
+            if (mBufferInfo.size != 0) {
+
+                // adjust the ByteBuffer values to match BufferInfo (not needed?)
+                outputBuffer.position(mBufferInfo.offset);
+                outputBuffer.limit(mBufferInfo.offset + mBufferInfo.size);
+
+                if (muxer.isMuxerStart()) {
+                    muxer.addMuxerData(new MuxerThread.MuxerData(MuxerThread.TRACK_VIDEO,
+                            outputBuffer, mBufferInfo));
+                }
             }
 
-            int outputBufferIndex = mMediaCodec.dequeueOutputBuffer(mBufferInfo, TIMEOUT);
-            while (outputBufferIndex >= 0) {
-                ByteBuffer outputBuffer = mMediaCodec.getOutputBuffer(outputBufferIndex);
+            // 单独保存编码后的文件
+            if (isSaveH264 && null != mFileOutputStream) {
                 byte[] outData = new byte[mBufferInfo.size];
                 outputBuffer.get(outData);
-                mFileOutputStream.write(outData, 0, outData.length);
-                mMediaCodec.releaseOutputBuffer(outputBufferIndex, false);
-                outputBufferIndex = mMediaCodec.dequeueOutputBuffer(mBufferInfo, TIMEOUT);
-                LogUtils.i("编码中...");
+                try {
+                    mFileOutputStream.write(outData, 0, outData.length);
+                } catch (IOException e) {
+                    LogUtils.e("Save h264 exception = " + e);
+                }
             }
 
-        } catch (IOException e) {
-            e.printStackTrace();
-            LogUtils.e("编码异常, exception = " + e);
+            // 释放
+            mMediaCodec.releaseOutputBuffer(outputBufferIndex, false);
+            outputBufferIndex = mMediaCodec.dequeueOutputBuffer(mBufferInfo, TIMEOUT);
+            LogUtils.i("编码中...");
         }
+
     }
 
     /**

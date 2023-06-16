@@ -1,13 +1,6 @@
 package com.zfg.mediafun.activity;
 
-import static com.zfg.encode.MuxerThread.BIT_RATE;
-import static com.zfg.encode.MuxerThread.FRAME_RATE;
-import static com.zfg.encode.MuxerThread.GOP;
-import static com.zfg.encode.MuxerThread.HEIGHT;
-import static com.zfg.encode.MuxerThread.MIME_TYPE;
-import static com.zfg.encode.MuxerThread.ROTATION;
 import static com.zfg.encode.MuxerThread.SIZE;
-import static com.zfg.encode.MuxerThread.WIDTH;
 
 import android.os.Bundle;
 import android.util.Size;
@@ -34,7 +27,6 @@ import com.zfg.common.Constants;
 import com.zfg.common.utils.DateUtils;
 import com.zfg.common.utils.ImageFormatUtils;
 import com.zfg.common.utils.LogUtils;
-import com.zfg.encode.MCVideoEncoder;
 import com.zfg.encode.MuxerThread;
 import com.zfg.mediafun.R;
 
@@ -62,10 +54,7 @@ public class PreviewActivity extends BaseActivity {
     // 默认选择后置摄像头
     private int mFacing = CameraSelector.LENS_FACING_BACK;
     private final ExecutorService mCameraExecutor = Executors.newSingleThreadExecutor();
-
-    private MCVideoEncoder mcVideoEncoder;
     private boolean isStartEncode;
-
 
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
@@ -77,14 +66,7 @@ public class PreviewActivity extends BaseActivity {
         mEncodeBtn = findViewById(R.id.btn_encode);
         mPreviewView = findViewById(R.id.preview);
 
-        initVideoEncoder();
-
         startCamera();
-    }
-
-    private void initVideoEncoder() {
-//        mcVideoEncoder = new MCVideoEncoder(MIME_TYPE, ROTATION, WIDTH, HEIGHT,
-//                FRAME_RATE, BIT_RATE, GOP);
     }
 
     private void startCamera() {
@@ -151,7 +133,6 @@ public class PreviewActivity extends BaseActivity {
                 byte[] nv21 = ImageFormatUtils.yuv420888ToNV21(yPlane, uPlane, vPlane,
                         SIZE.getWidth(), SIZE.getHeight());
                 ImageFormatUtils.NV21ToNV12(nv21, nv12, SIZE.getWidth(), SIZE.getHeight());
-//                mcVideoEncoder.add(nv21);
                 MuxerThread.addVideoPreviewData(nv12);
             }
 
@@ -161,7 +142,7 @@ public class PreviewActivity extends BaseActivity {
         // 绑定前先解绑
         cameraProvider.unbindAll();
         // 参数中如果有mImageCapture才能拍照，有mImageAnalyzer才能获取YUV数据
-        Camera camera = cameraProvider.bindToLifecycle(this, cameraSelector,
+        cameraProvider.bindToLifecycle(this, cameraSelector,
                 preview, mImageCapture, mImageAnalyzer);
     }
 
@@ -208,29 +189,29 @@ public class PreviewActivity extends BaseActivity {
         LogUtils.i("encoderClick label = " + label);
         if ("开始编码".equals(label)) {
             mEncodeBtn.setText("停止编码");
-            mcVideoEncoder.start();
+            MuxerThread.startMuxer();
             isStartEncode = true;
         } else {
             mEncodeBtn.setText("开始编码");
             isStartEncode = false;
-            mcVideoEncoder.stopEncodeVideo();
+            MuxerThread.stopMuxer();
         }
     }
 
-    private void stopRecording() {
-        LogUtils.i("stopRecording");
+    private void stopCamera() {
+        LogUtils.i("stopCamera");
         // stop encode
         if (null != mImageAnalyzer) {
             mImageAnalyzer.clearAnalyzer();
         }
 
         isStartEncode = false;
-        mcVideoEncoder.stopEncodeVideo();
+        MuxerThread.stopMuxer();
     }
 
     @Override
     protected void onDestroy() {
         super.onDestroy();
-        stopRecording();
+        stopCamera();
     }
 }

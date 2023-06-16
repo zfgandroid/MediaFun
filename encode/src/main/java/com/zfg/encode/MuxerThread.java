@@ -170,6 +170,7 @@ public class MuxerThread extends Thread {
         }
 
         muxerDataList.add(data);
+
         synchronized (lock) {
             lock.notify();
         }

@@ -10,7 +10,6 @@ import android.media.MediaCodec;
 import android.media.MediaCodecInfo;
 import android.media.MediaFormat;
 import android.media.MediaRecorder;
-import android.util.Log;
 
 import com.zfg.common.Constants;
 import com.zfg.common.utils.DateUtils;
@@ -83,10 +82,15 @@ public class MCAudioEncoder extends Thread {
     private volatile boolean isExit = false;
     // 混合器是否准备好
     private volatile boolean isMuxerReady = false;
+    private long prevOutputPTSUs = 0;
+    // 是否单独保存aac文件
+    private boolean isSaveAac;
 
     public MCAudioEncoder(WeakReference<MuxerThread> muxerThread) {
         this.muxerThread = muxerThread;
-        createFile();
+        if (isSaveAac) {
+            createFile();
+        }
         startRecord();
         initEncoder();
     }
@@ -206,9 +210,9 @@ public class MCAudioEncoder extends Thread {
         isExit = true;
     }
 
-    public synchronized void setRestart() {
+    public synchronized void restart() {
         isPrepared = false;
-        //isMuxerReady = false;
+        isMuxerReady = false;
     }
 
     public void setMuxerReady(boolean muxerReady) {
@@ -228,20 +232,29 @@ public class MCAudioEncoder extends Thread {
         // 获取到的录音大小
         int readBytes;
         while (!isExit) {
-            // 启动或重启
-            if (!isPrepared) {
+            if (!isMuxerReady) {
+                synchronized (lock) {
+                    try {
+                        LogUtils.i("Audio wait muxer...");
+                        lock.wait();
+                    } catch (InterruptedException e) {
+                    }
+                }
+            }
+
+            if (isMuxerReady && !isPrepared) {
                 initMediaCodecResult = startMediaCodec();
             } else if (initMediaCodecResult && null != mAudioRecord) {
                 readBytes = mAudioRecord.read(audioData, 0, minBufferSize);
                 // 如果读取音频数据没有出现错误，就开始编码
                 if (readBytes > 0) {
                     // 将PCM编码成AAC
-                    encodeData(audioData, readBytes);
+                    encodeData(audioData, readBytes, getPTSUs());
                 }
             }
         }
 
-        if (null != mFileOutputStream) {
+        if (isSaveAac && null != mFileOutputStream) {
             try {
                 mFileOutputStream.close();
                 LogUtils.i("FileOutputStream close");
@@ -253,7 +266,7 @@ public class MCAudioEncoder extends Thread {
         LogUtils.i("Stop MCAudioEncoder thread...");
     }
 
-    private void encodeData(byte[] bufferData, int readBytes) {
+    private void encodeData(byte[] bufferData, int readBytes, long presentationTimeUs) {
         // dequeueInputBuffer（time）需要传入一个时间值，-1表示一直等待，0表示不等待有可能会丢帧，其他表示等待多少毫秒
         // 获取输入缓存的index
         int inputIndex = mMediaCodec.dequeueInputBuffer(-1);
@@ -265,36 +278,55 @@ public class MCAudioEncoder extends Thread {
             // 限制ByteBuffer的访问长度
             inputByteBuffer.limit(bufferData.length);
             // 把输入缓存塞回去给MediaCodec
-            mMediaCodec.queueInputBuffer(inputIndex, 0, bufferData.length, 0, 0);
+            mMediaCodec.queueInputBuffer(inputIndex, 0, bufferData.length, presentationTimeUs, 0);
         } else {
             LogUtils.e("encodeData error inputIndex = " + inputIndex + ", readBytes = " + readBytes);
         }
 
+        final MuxerThread muxer = muxerThread.get();
+        if (muxer == null) {
+            LogUtils.e("MuxerThread is null");
+            return;
+        }
+        MediaFormat format = mMediaCodec.getOutputFormat();
+        muxer.addMediaTrack(MuxerThread.TRACK_AUDIO, format);
+
         // 获取输出缓存的index
         int outputIndex = mMediaCodec.dequeueOutputBuffer(mBufferInfo, 0);
         while (outputIndex >= 0) {
-            // 获取缓存信息的长度
-            int byteBufSize = mBufferInfo.size;
-            // 添加ADTS头部后的长度
-            int bytePacketSize = byteBufSize + 7;
-
             ByteBuffer outByteBuffer = mMediaCodec.getOutputBuffer(outputIndex);
-            outByteBuffer.position(mBufferInfo.offset);
-            outByteBuffer.limit(mBufferInfo.offset + mBufferInfo.size);
-
-            byte[] targetByte = new byte[bytePacketSize];
-            // 添加ADTS头部
-            addADTStoPacket(targetByte, bytePacketSize);
-            // 将编码得到的AAC数据 取出到byte[]中 偏移量offset=7
-            outByteBuffer.get(targetByte, 7, byteBufSize);
-
-            outByteBuffer.position(mBufferInfo.offset);
-
-            try {
-                mFileOutputStream.write(targetByte);
-            } catch (IOException e) {
-                e.printStackTrace();
+            if (mBufferInfo.size != 0 && muxer.isMuxerStart()) {
+                mBufferInfo.presentationTimeUs = getPTSUs();
+                muxer.addMuxerData(new MuxerThread.MuxerData(MuxerThread.TRACK_AUDIO, outByteBuffer,
+                        mBufferInfo));
+                prevOutputPTSUs = mBufferInfo.presentationTimeUs;
             }
+
+            // 单独保存编码后的文件
+            if (isSaveAac && null != mFileOutputStream) {
+                // 获取缓存信息的长度
+                int byteBufSize = mBufferInfo.size;
+                // 添加ADTS头部后的长度
+                int bytePacketSize = byteBufSize + 7;
+
+                outByteBuffer.position(mBufferInfo.offset);
+                outByteBuffer.limit(mBufferInfo.offset + mBufferInfo.size);
+
+                byte[] targetByte = new byte[bytePacketSize];
+                // 添加ADTS头部
+                addADTStoPacket(targetByte, bytePacketSize);
+                // 将编码得到的AAC数据 取出到byte[]中 偏移量offset=7
+                outByteBuffer.get(targetByte, 7, byteBufSize);
+
+                outByteBuffer.position(mBufferInfo.offset);
+
+                try {
+                    mFileOutputStream.write(targetByte);
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+            }
+
             // 释放
             mMediaCodec.releaseOutputBuffer(outputIndex, false);
             outputIndex = mMediaCodec.dequeueOutputBuffer(mBufferInfo, 0);
@@ -318,5 +350,14 @@ public class MCAudioEncoder extends Thread {
         packet[4] = (byte) ((packetLen & 0x7FF) >> 3);
         packet[5] = (byte) (((packetLen & 7) << 5) + 0x1F);
         packet[6] = (byte) 0xFC;
+    }
+
+    private long getPTSUs() {
+        long result = System.nanoTime() / 1000L;
+        // presentationTimeUs should be monotonic
+        // otherwise muxer fail to write
+        if (result < prevOutputPTSUs)
+            result = (prevOutputPTSUs - result) + result;
+        return result;
     }
 }
