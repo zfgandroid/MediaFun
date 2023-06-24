@@ -8,6 +8,7 @@ import android.media.AudioFormat;
 import android.media.AudioRecord;
 import android.media.MediaCodec;
 import android.media.MediaCodecInfo;
+import android.media.MediaCodecList;
 import android.media.MediaFormat;
 import android.media.MediaRecorder;
 
@@ -40,12 +41,12 @@ public class MCAudioEncoder extends Thread {
     /**
      * 比特率（码率，即编码器每秒输出的数据大小）
      */
-    private static final int BIT_RATE = 128 * 1024;
+    private static final int BIT_RATE = 64000;
 
     /**
      * 采样率
      */
-    private static final int SAMPLE_RATE_HZ = 44100;
+    private static final int SAMPLE_RATE_HZ = 16000;
 
     /**
      * 声道数
@@ -66,6 +67,9 @@ public class MCAudioEncoder extends Thread {
      * 返回的音频数据的格式，ENCODING_PCM_8BIT, ENCODING_PCM_16BIT, and ENCODING_PCM_FLOAT.
      */
     private static final int AUDIO_FORMAT = AudioFormat.ENCODING_PCM_16BIT;
+
+    // 超时时间，单位：微秒，1微秒=0.001毫秒 0.012秒
+    private final static int TIMEOUT = 12000;
 
     private final Object lock = new Object();
     private WeakReference<MuxerThread> muxerThread;
@@ -88,6 +92,9 @@ public class MCAudioEncoder extends Thread {
 
     public MCAudioEncoder(WeakReference<MuxerThread> muxerThread) {
         this.muxerThread = muxerThread;
+        // 解码后保存数据的类型，包含每一个buffer的元数据信息
+        mBufferInfo = new MediaCodec.BufferInfo();
+
         if (isSaveAac) {
             createFile();
         }
@@ -115,14 +122,37 @@ public class MCAudioEncoder extends Thread {
     }
 
     private void initEncoder() {
+        MediaCodecInfo audioCodecInfo = selectMediaCodec(MINE_TYPE_AAC);
+        if (audioCodecInfo == null) {
+            LogUtils.e("selectAudioCodec null");
+            return;
+        }
+        LogUtils.i("selectAudioCodec = " + audioCodecInfo.getName());
+
         // 设置编码参数
         mediaFormat = MediaFormat.createAudioFormat(MINE_TYPE_AAC, SAMPLE_RATE_HZ, CHANNEL_COUNT);
         mediaFormat.setInteger(MediaFormat.KEY_BIT_RATE, BIT_RATE);
-        mediaFormat.setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC);
-        mediaFormat.setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, MAX_BUFFER_SIZE);
+//        mediaFormat.setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC);
+//        mediaFormat.setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, MAX_BUFFER_SIZE);
+    }
 
-        // 解码后保存数据的类型，包含每一个buffer的元数据信息
-        mBufferInfo = new MediaCodec.BufferInfo();
+    private MediaCodecInfo selectMediaCodec(String mimeType) {
+        int numCodecs = MediaCodecList.getCodecCount();
+        for (int i = 0; i < numCodecs; i++) {
+            MediaCodecInfo codecInfo = MediaCodecList.getCodecInfoAt(i);
+            if (!codecInfo.isEncoder()) {
+                continue;
+            }
+            String[] types = codecInfo.getSupportedTypes();
+            for (String type : types) {
+                if (type.equalsIgnoreCase(mimeType)) {
+                    String encoderName = codecInfo.getName();
+                    LogUtils.i("encoderName = " + encoderName);
+                    return codecInfo;
+                }
+            }
+        }
+        return null;
     }
 
     private boolean startMediaCodec() {
@@ -269,7 +299,7 @@ public class MCAudioEncoder extends Thread {
     private void encodeData(byte[] bufferData, int readBytes, long presentationTimeUs) {
         // dequeueInputBuffer（time）需要传入一个时间值，-1表示一直等待，0表示不等待有可能会丢帧，其他表示等待多少毫秒
         // 获取输入缓存的index
-        int inputIndex = mMediaCodec.dequeueInputBuffer(-1);
+        int inputIndex = mMediaCodec.dequeueInputBuffer(TIMEOUT);
         if (inputIndex >= 0) {
             ByteBuffer inputByteBuffer = mMediaCodec.getInputBuffer(inputIndex);
             inputByteBuffer.clear();
@@ -283,54 +313,66 @@ public class MCAudioEncoder extends Thread {
             LogUtils.e("encodeData error inputIndex = " + inputIndex + ", readBytes = " + readBytes);
         }
 
-        final MuxerThread muxer = muxerThread.get();
+        MuxerThread muxer = muxerThread.get();
         if (muxer == null) {
-            LogUtils.e("MuxerThread is null");
+            LogUtils.e("muxer is null");
             return;
         }
-        MediaFormat format = mMediaCodec.getOutputFormat();
-        muxer.addMediaTrack(MuxerThread.TRACK_AUDIO, format);
-
         // 获取输出缓存的index
-        int outputIndex = mMediaCodec.dequeueOutputBuffer(mBufferInfo, 0);
-        while (outputIndex >= 0) {
-            ByteBuffer outByteBuffer = mMediaCodec.getOutputBuffer(outputIndex);
-            if (mBufferInfo.size != 0 && muxer.isMuxerStart()) {
-                mBufferInfo.presentationTimeUs = getPTSUs();
-                muxer.addMuxerData(new MuxerThread.MuxerData(MuxerThread.TRACK_AUDIO, outByteBuffer,
-                        mBufferInfo));
-                prevOutputPTSUs = mBufferInfo.presentationTimeUs;
-            }
+        int outputIndex;
 
-            // 单独保存编码后的文件
-            if (isSaveAac && null != mFileOutputStream) {
-                // 获取缓存信息的长度
-                int byteBufSize = mBufferInfo.size;
-                // 添加ADTS头部后的长度
-                int bytePacketSize = byteBufSize + 7;
+        do {
+            outputIndex = mMediaCodec.dequeueOutputBuffer(mBufferInfo, TIMEOUT);
 
-                outByteBuffer.position(mBufferInfo.offset);
-                outByteBuffer.limit(mBufferInfo.offset + mBufferInfo.size);
-
-                byte[] targetByte = new byte[bytePacketSize];
-                // 添加ADTS头部
-                addADTStoPacket(targetByte, bytePacketSize);
-                // 将编码得到的AAC数据 取出到byte[]中 偏移量offset=7
-                outByteBuffer.get(targetByte, 7, byteBufSize);
-
-                outByteBuffer.position(mBufferInfo.offset);
-
-                try {
-                    mFileOutputStream.write(targetByte);
-                } catch (IOException e) {
-                    e.printStackTrace();
+            if (outputIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                MediaFormat format = mMediaCodec.getOutputFormat();
+                MuxerThread muxerRun = muxerThread.get();
+                if (muxerRun != null) {
+                    muxer.addMediaTrack(MuxerThread.TRACK_AUDIO, format);
                 }
+            } else if (outputIndex < 0) {
+                LogUtils.e("outputIndex < 0");
+            } else {
+                ByteBuffer outByteBuffer = mMediaCodec.getOutputBuffer(outputIndex);
+                if (mBufferInfo.size != 0 && muxer.isMuxerStart()) {
+                    mBufferInfo.presentationTimeUs = getPTSUs();
+                    LogUtils.i("Audio size = " + mBufferInfo.size);
+                    muxer.addMuxerData(new MuxerThread.MuxerData(MuxerThread.TRACK_AUDIO, outByteBuffer,
+                            mBufferInfo));
+                    prevOutputPTSUs = mBufferInfo.presentationTimeUs;
+                }
+
+                // 单独保存编码后的文件
+                if (isSaveAac && null != mFileOutputStream) {
+                    // 获取缓存信息的长度
+                    int byteBufSize = mBufferInfo.size;
+                    // 添加ADTS头部后的长度
+                    int bytePacketSize = byteBufSize + 7;
+
+                    outByteBuffer.position(mBufferInfo.offset);
+                    outByteBuffer.limit(mBufferInfo.offset + mBufferInfo.size);
+
+                    byte[] targetByte = new byte[bytePacketSize];
+                    // 添加ADTS头部
+                    addADTStoPacket(targetByte, bytePacketSize);
+                    // 将编码得到的AAC数据 取出到byte[]中 偏移量offset=7
+                    outByteBuffer.get(targetByte, 7, byteBufSize);
+
+                    outByteBuffer.position(mBufferInfo.offset);
+
+                    try {
+                        mFileOutputStream.write(targetByte);
+                    } catch (IOException e) {
+                        e.printStackTrace();
+                    }
+                }
+
+                // 释放
+                mMediaCodec.releaseOutputBuffer(outputIndex, false);
+                outputIndex = mMediaCodec.dequeueOutputBuffer(mBufferInfo, TIMEOUT);
             }
 
-            // 释放
-            mMediaCodec.releaseOutputBuffer(outputIndex, false);
-            outputIndex = mMediaCodec.dequeueOutputBuffer(mBufferInfo, 0);
-        }
+        } while (outputIndex >= 0);
     }
 
     /**

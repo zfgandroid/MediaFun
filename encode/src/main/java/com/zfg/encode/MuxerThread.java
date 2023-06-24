@@ -136,8 +136,8 @@ public class MuxerThread extends Thread {
         if (file.exists()) {
             file.delete();
         }
-
         String filePath = file.getAbsolutePath();
+
         mediaMuxer = new MediaMuxer(filePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4);
         if (mAudioThread != null) {
             mAudioThread.setMuxerReady(true);
@@ -265,7 +265,7 @@ public class MuxerThread extends Thread {
                     try {
                         mediaMuxer.writeSampleData(track, data.byteBuf, data.bufferInfo);
                     } catch (Exception e) {
-                        LogUtils.e("写入混合数据失败, exception = " + e);
+                        LogUtils.e("写入混合数据失败, exception = " + e + ", track = " + track);
                     }
                 }
             } else {

@@ -252,7 +252,6 @@ public class MCVideoEncoder extends Thread {
                 startMediaCodec();
             } else if (mFrameBytes.size() > 0) {
                 byte[] bytes = mFrameBytes.poll();
-                LogUtils.i("encode...");
                 encodeFrame(bytes);
             }
         }
@@ -274,7 +273,6 @@ public class MCVideoEncoder extends Thread {
     private void encodeFrame(byte[] input) {
         int inputBufferIndex = mMediaCodec.dequeueInputBuffer(-1);
         if (inputBufferIndex >= 0) {
-//            pts = computePresentationTime(generateIndex);
             ByteBuffer inputBuffer = mMediaCodec.getInputBuffer(inputBufferIndex);
             inputBuffer.clear();
             // inputBuffer.remaining()要大于或等于input.length否则报错
@@ -282,7 +280,6 @@ public class MCVideoEncoder extends Thread {
             inputBuffer.put(input);
             mMediaCodec.queueInputBuffer(inputBufferIndex, 0, input.length,
                     System.nanoTime() / 1000, 0);
-//            generateIndex += 1;
         }
 
         MuxerThread muxer = muxerThread.get();
@@ -290,47 +287,47 @@ public class MCVideoEncoder extends Thread {
             LogUtils.e("MuxerThread is null");
             return;
         }
-        MediaFormat format = mMediaCodec.getOutputFormat();
-        muxer.addMediaTrack(MuxerThread.TRACK_VIDEO, format);
 
-        int outputBufferIndex = mMediaCodec.dequeueOutputBuffer(mBufferInfo, TIMEOUT);
-        while (outputBufferIndex >= 0) {
-            ByteBuffer outputBuffer = mMediaCodec.getOutputBuffer(outputBufferIndex);
-            if (mBufferInfo.size != 0) {
-
-                // adjust the ByteBuffer values to match BufferInfo (not needed?)
-                outputBuffer.position(mBufferInfo.offset);
-                outputBuffer.limit(mBufferInfo.offset + mBufferInfo.size);
-
-                if (muxer.isMuxerStart()) {
-                    muxer.addMuxerData(new MuxerThread.MuxerData(MuxerThread.TRACK_VIDEO,
-                            outputBuffer, mBufferInfo));
+        int outputIndex = mMediaCodec.dequeueOutputBuffer(mBufferInfo, TIMEOUT);
+        do {
+            if (outputIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                MediaFormat format = mMediaCodec.getOutputFormat();
+                MuxerThread muxerRun = muxerThread.get();
+                if (muxerRun != null) {
+                    muxer.addMediaTrack(MuxerThread.TRACK_VIDEO, format);
                 }
-            }
+            } else if (outputIndex < 0) {
+                LogUtils.e("outputIndex < 0");
+            } else {
+                ByteBuffer outputBuffer = mMediaCodec.getOutputBuffer(outputIndex);
+                if (mBufferInfo.size != 0) {
 
-            // 单独保存编码后的文件
-            if (isSaveH264 && null != mFileOutputStream) {
-                byte[] outData = new byte[mBufferInfo.size];
-                outputBuffer.get(outData);
-                try {
-                    mFileOutputStream.write(outData, 0, outData.length);
-                } catch (IOException e) {
-                    LogUtils.e("Save h264 exception = " + e);
+                    // adjust the ByteBuffer values to match BufferInfo (not needed?)
+                    outputBuffer.position(mBufferInfo.offset);
+                    outputBuffer.limit(mBufferInfo.offset + mBufferInfo.size);
+
+                    if (muxer.isMuxerStart()) {
+                        LogUtils.i("Video size = " + mBufferInfo.size);
+                        muxer.addMuxerData(new MuxerThread.MuxerData(MuxerThread.TRACK_VIDEO,
+                                outputBuffer, mBufferInfo));
+                    }
                 }
+
+                // 单独保存编码后的文件
+                if (isSaveH264 && null != mFileOutputStream) {
+                    byte[] outData = new byte[mBufferInfo.size];
+                    outputBuffer.get(outData);
+                    try {
+                        mFileOutputStream.write(outData, 0, outData.length);
+                    } catch (IOException e) {
+                        LogUtils.e("Save h264 exception = " + e);
+                    }
+                }
+
+                // 释放
+                mMediaCodec.releaseOutputBuffer(outputIndex, false);
+                outputIndex = mMediaCodec.dequeueOutputBuffer(mBufferInfo, TIMEOUT);
             }
-
-            // 释放
-            mMediaCodec.releaseOutputBuffer(outputBufferIndex, false);
-            outputBufferIndex = mMediaCodec.dequeueOutputBuffer(mBufferInfo, TIMEOUT);
-            LogUtils.i("编码中...");
-        }
-
-    }
-
-    /**
-     * 根据帧数生成时间戳
-     */
-    private long computePresentationTime(long frameIndex) {
-        return 132 + frameIndex * 1000000 / mFrameRate;
+        } while (outputIndex >= 0);
     }
 }
