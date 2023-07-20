@@ -19,7 +19,11 @@ public class MediaFunApplication extends Application {
 
         mApplication = this;
 
-        LogUtils.setLevel(LogUtils.DEBUG);
+        if (BuildConfig.DEBUG) {
+            LogUtils.setLevel(LogUtils.DEBUG);
+        } else {
+            LogUtils.setLevel(LogUtils.INFO);
+        }
         LogUtils.i("Show log...");
     }
 
